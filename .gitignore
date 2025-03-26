@@ -1,0 +1,51 @@
+.qodo
+
+# Go build artifacts
+/bin/
+/pkg/
+/out/
+*.exe
+*.test
+*.prof
+*.out
+
+# Go modules
+vendor/
+go.sum
+go.work
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+nohup.out
+.DS_Store
+
+# Config files
+config.yaml
+config.local.yaml
+
+# Database and cache
+*.db
+*.sqlite
+*.sqlite3
+*.lock
+dump.rdb
+
+# Compiled protobuf files
+*.pb.go
+
+# Docker and Kubernetes
+docker-compose.override.yml
+.env
+.envrc
+
+# IDE and editor specific
+.idea/
+.vscode/
+*.iml
+
+# Coverage reports
+coverage/
+*.coverprofile
