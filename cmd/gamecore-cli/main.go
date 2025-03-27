@@ -1,1 +1,5 @@
 package gamecorecli
+
+func main() {
+
+}
