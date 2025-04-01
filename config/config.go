@@ -2,14 +2,16 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	App      AppConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
+	App      AppConfig      `yaml:"app"`
+	Database DatabaseConfig `yaml:"database"`
+	Redis    RedisConfig    `yaml:"redis"`
+	JWT      JWTConfig      `yaml:"jwt"`
 }
 
 type AppConfig struct {
@@ -34,6 +36,11 @@ type RedisConfig struct {
 	Password string `yaml:"password"`  // ""
 	DB       int    `yaml:"db"`        // 0
 	PoolSize int    `yaml:"pool_size"` // 20
+}
+
+type JWTConfig struct {
+	SecretKey  string        `yaml:"secret_key"`
+	Expiration time.Duration `yaml:"expiration"`
 }
 
 func LoadConfig(path string) (*Config, error) {

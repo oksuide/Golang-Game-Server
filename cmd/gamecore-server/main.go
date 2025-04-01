@@ -2,29 +2,26 @@ package main
 
 import (
 	"log"
+	"net/http"
 
-	"gameCore/config"
-	"gameCore/internal/storage"
+	"gameCore/internal/bootstrap"
 )
 
-// main.go
 func main() {
-	cfg, err := config.LoadConfig("/home/oksuide/GoProjects/gameCore/config/config.yaml")
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
+	// Инициализируем сервисы (БД, Redis, движок, WebSocket)
+	gameInstance, wsServer := bootstrap.Init()
 
-	// Init DB
-	if err := storage.Connect(cfg.Database); err != nil {
-		log.Fatal("DB error:", err)
-	}
-	defer storage.Close()
-	// Migration
-	if err := storage.InitTables(); err != nil {
-		log.Fatal("Migration error:", err)
-	}
-	// Init Redis
-	if err := storage.InitRedis(cfg.Redis); err != nil {
-		log.Fatal(err)
+	// Запускаем игровой цикл
+	go gameInstance.GameLoop()
+	go wsServer.BroadcastGameState()
+
+	// Настроим маршруты
+	http.HandleFunc("/ws", wsServer.HandleConnections)
+
+	// Запускаем сервер
+	port := 8080
+	log.Printf("Сервер запущен на порту :%d", port)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal("Ошибка сервера:", err)
 	}
 }
