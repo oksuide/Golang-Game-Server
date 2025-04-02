@@ -34,7 +34,7 @@ func Init() (*game.Game, *network.WebSocketServer) {
 	gameInstance := game.NewGame()
 
 	// Создаем WebSocket-сервер
-	wsServer := network.NewWebSocketServer(gameInstance)
+	wsServer := network.NewWebSocketServer(gameInstance, cfg.WebSocket)
 
 	return gameInstance, wsServer
 }
