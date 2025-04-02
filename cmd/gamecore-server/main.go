@@ -1,27 +1,31 @@
 package main
 
 import (
+	"context"
 	"log"
-	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"gameCore/internal/bootstrap"
 )
 
 func main() {
-	// Инициализируем сервисы (БД, Redis, движок, WebSocket)
+	// Инициализируем сервисы
 	gameInstance, wsServer := bootstrap.Init()
 
-	// Запускаем игровой цикл
-	go gameInstance.GameLoop()
-	go wsServer.BroadcastGameState()
+	// Запускаем игровые процессы
+	go gameInstance.Start()
+	go wsServer.Start(":8080")
 
-	// Настроим маршруты
-	http.HandleFunc("/ws", wsServer.HandleConnections)
+	// Ожидание сигнала завершения
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
 
-	// Запускаем сервер
-	port := 8080
-	log.Printf("Сервер запущен на порту :%d", port)
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal("Ошибка сервера:", err)
-	}
+	// Грейсфул шатдаун
+	log.Println("Завершаем работу...")
+	ctx := context.Background()
+	wsServer.Shutdown(ctx)
+	log.Println("Сервер остановлен.")
 }

@@ -8,39 +8,67 @@ import (
 )
 
 type Config struct {
-	App      AppConfig      `yaml:"app"`
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	JWT      JWTConfig      `yaml:"jwt"`
+	App       AppConfig       `yaml:"app"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Redis     RedisConfig     `yaml:"redis"`
+	JWT       JWTConfig       `yaml:"jwt"`
+	WebSocket WebSocketConfig `yaml:"websocket"`
+	Game      GameConfig      `yaml:"game"`
+	Logging   LoggingConfig   `yaml:"logging"`
 }
 
 type AppConfig struct {
-	Env  string
-	Port int
+	Env             string        `yaml:"env"`
+	Port            int           `yaml:"port"`
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 
 type DatabaseConfig struct {
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	Name         string
-	SSLMode      string
-	MaxOpenConns int
-	MaxIdleConns int
+	Host            string        `yaml:"host"`
+	Port            int           `yaml:"port"`
+	User            string        `yaml:"user"`
+	Password        string        `yaml:"password"`
+	Name            string        `yaml:"name"`
+	SSLMode         string        `yaml:"ssl_mode"`
+	MaxOpenConns    int           `yaml:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
 type RedisConfig struct {
-	Host     string `yaml:"host"`      // "localhost"
-	Port     int    `yaml:"port"`      // 6379
-	Password string `yaml:"password"`  // ""
-	DB       int    `yaml:"db"`        // 0
-	PoolSize int    `yaml:"pool_size"` // 20
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	PoolSize int    `yaml:"pool_size"`
 }
 
 type JWTConfig struct {
 	SecretKey  string        `yaml:"secret_key"`
 	Expiration time.Duration `yaml:"expiration"`
+}
+
+type WebSocketConfig struct {
+	ReadTimeout     time.Duration `yaml:"read_timeout"`
+	WriteTimeout    time.Duration `yaml:"write_timeout"`
+	MaxMessageSize  int           `yaml:"max_message_size"`
+	PongTimeout     time.Duration `yaml:"pong_timeout"`
+	PingInterval    time.Duration `yaml:"ping_interval"`
+	ReadBufferSize  int           `yaml:"read_buffer_size"`
+	WriteBufferSize int           `yaml:"write_buffer_size"`
+}
+
+type GameConfig struct {
+	TickRate           time.Duration `yaml:"tick_rate"`
+	MaxPlayers         int           `yaml:"max_players"`
+	MatchTime          time.Duration `yaml:"match_time"`
+	RankRange          int           `yaml:"rank_range"`
+	RankExpandInterval time.Duration `yaml:"rank_expand_interval"`
+}
+
+type LoggingConfig struct {
+	Level string `yaml:"level"`
+	File  string `yaml:"file"`
 }
 
 func LoadConfig(path string) (*Config, error) {

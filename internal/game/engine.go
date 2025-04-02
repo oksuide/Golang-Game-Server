@@ -1,6 +1,7 @@
 package game
 
 import (
+	"errors"
 	"log"
 	"math"
 	"sync"
@@ -53,14 +54,13 @@ func NewGame() *Game {
 }
 
 // AddPlayer добавляет нового игрока с базовыми характеристиками
-func (g *Game) AddPlayer(id uint, conn *websocket.Conn) {
+func (g *Game) AddPlayer(id uint, conn *websocket.Conn) error {
 	g.Mutex.Lock()
 	defer g.Mutex.Unlock()
 
 	// Проверяем, не существует ли уже игрок с таким ID
 	if _, exists := g.Players[id]; exists {
-		log.Printf("Игрок с ID %d уже существует", id)
-		return
+		return errors.New("игрок с таким ID уже существует")
 	}
 
 	g.Players[id] = &Player{
@@ -83,6 +83,7 @@ func (g *Game) AddPlayer(id uint, conn *websocket.Conn) {
 		lastShot: time.Now(),
 	}
 	log.Printf("Добавлен игрок %d", id)
+	return nil
 }
 
 // RemovePlayer удаляет игрока из игры
