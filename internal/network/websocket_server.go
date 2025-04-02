@@ -1,113 +1,137 @@
 package network
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"sync/atomic"
+	"time"
 
+	"gameCore/config"
 	"gameCore/internal/game"
 
 	"github.com/gorilla/websocket"
 )
 
-// WebSocket-сервер
 type WebSocketServer struct {
-	Game *game.Game
+	Game       *game.Game
+	httpServer *http.Server
+	Config     config.WebSocketConfig
+	upgrader   websocket.Upgrader
 }
 
-func NewWebSocketServer(gameInstance *game.Game) *WebSocketServer {
+// NewWebSocketServer создает новый WebSocket сервер
+func NewWebSocketServer(gameInstance *game.Game, wsConfig config.WebSocketConfig) *WebSocketServer {
+	if wsConfig.ReadBufferSize == 0 {
+		wsConfig.ReadBufferSize = 4096
+	}
+	if wsConfig.WriteBufferSize == 0 {
+		wsConfig.WriteBufferSize = 4096
+	}
+	if wsConfig.PongTimeout == 0 {
+		wsConfig.PongTimeout = 60 * time.Second
+	}
+
 	return &WebSocketServer{
-		Game: gameInstance,
+		Game:   gameInstance,
+		Config: wsConfig,
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  wsConfig.ReadBufferSize,
+			WriteBufferSize: wsConfig.WriteBufferSize,
+			CheckOrigin: func(r *http.Request) bool {
+				return true // В production заменить на проверку origin
+			},
+		},
 	}
 }
 
-// Обработчик подключения
-func (s *WebSocketServer) HandleConnections(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+var playerCounter uint32 = 0
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+func (s *WebSocketServer) handleConnection(w http.ResponseWriter, r *http.Request) {
+	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println("Ошибка WebSocket:", err)
+		log.Println("WebSocket upgrade error:", err)
 		return
 	}
 
-	// Генерируем уникальный ID игрока (автоинкремент)
 	playerID := uint(atomic.AddUint32(&playerCounter, 1))
 
-	// Добавляем игрока в игру
-	s.Game.AddPlayer(playerID, conn)
-	log.Printf("Игрок %d подключился\n", playerID)
+	// Обрабатываем отключение даже если не дошли до handlePlayerMessages
+	defer s.handleDisconnection(playerID, conn)
 
-	// Запускаем обработку сообщений от игрока
-	go s.listenToPlayer(playerID, conn)
+	conn.SetReadLimit(int64(s.Config.MaxMessageSize))
+	conn.SetReadDeadline(time.Now().Add(s.Config.PongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(s.Config.PongTimeout))
+		return nil
+	})
+
+	s.Game.AddPlayer(playerID, conn)
+
+	log.Printf("Player %d connected", playerID)
+	s.handlePlayerMessages(playerID, conn)
 }
 
-// Счетчик игроков (автоинкремент)
-var playerCounter uint32 = 0
-
-// Прослушивание сообщений от игрока
-func (s *WebSocketServer) listenToPlayer(playerID uint, conn *websocket.Conn) {
-	defer func() {
-		s.Game.RemovePlayer(playerID) // Удаляем игрока при отключении
-		conn.Close()
-		log.Printf("Игрок %d отключился\n", playerID)
-	}()
+func (s *WebSocketServer) handlePlayerMessages(playerID uint, conn *websocket.Conn) {
+	defer s.handleDisconnection(playerID, conn)
 
 	for {
 		var input struct {
-			Up, Down, Left, Right bool
-			Angle                 float64
+			Up          bool    `json:"up"`
+			Down        bool    `json:"down"`
+			Left        bool    `json:"left"`
+			Right       bool    `json:"right"`
+			Angle       float64 `json:"angle"`
+			Shoot       bool    `json:"shoot"`
+			UpgradeStat string  `json:"upgradeStat,omitempty"`
 		}
 
-		// Читаем сообщение от игрока
-		err := conn.ReadJSON(&input)
-		if err != nil {
-			log.Printf("Ошибка чтения от игрока %d: %v", playerID, err)
+		if err := conn.ReadJSON(&input); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("Player %d read error: %v", playerID, err)
+			}
 			return
 		}
 
-		// Обновляем игрока в игре
-		s.Game.UpdatePlayer(playerID, input)
+		s.Game.Inputs <- game.PlayerInput{
+			ID: playerID,
+			Input: game.PlayerInputData{
+				Up:    input.Up,
+				Down:  input.Down,
+				Left:  input.Left,
+				Right: input.Right,
+				Angle: input.Angle,
+				Shoot: input.Shoot,
+			},
+			UpgradeStat: input.UpgradeStat,
+		}
+
 	}
 }
 
-// BroadcastGameState рассылает состояние игры всем игрокам
-func (s *WebSocketServer) BroadcastGameState() {
-	s.Game.RLock() // Блокируем чтение, чтобы избежать гонок данных
-	defer s.Game.RUnlock()
-
-	state := make(map[uint]game.PlayerState)
-
-	// Собираем информацию о всех игроках
-	for id, player := range s.Game.Players {
-		state[id] = game.PlayerState{
-			X:     player.X,
-			Y:     player.Y,
-			Angle: player.Angle,
-		}
-	}
-
-	// Отправляем состояние всем подключённым игрокам
-	for _, player := range s.Game.Players {
-		if player.Conn != nil {
-			err := player.Conn.WriteJSON(state)
-			if err != nil {
-				log.Printf("Ошибка отправки данных игроку %d: %v", player.ID, err)
-				player.Conn.Close()
-			}
-		}
-	}
+func (s *WebSocketServer) handleDisconnection(playerID uint, conn *websocket.Conn) {
+	s.Game.RemovePlayer(playerID)
+	conn.Close()
+	log.Printf("Player %d disconnected", playerID)
 }
 
-// Запуск WebSocket-сервера
 func (s *WebSocketServer) Start(address string) {
-	http.HandleFunc("/ws", s.HandleConnections)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", s.handleConnection)
 
-	log.Println("Запуск WebSocket-сервера на", address)
-	err := http.ListenAndServe(address, nil)
-	if err != nil {
-		log.Fatal("Ошибка запуска WebSocket-сервера:", err)
+	s.httpServer = &http.Server{
+		Addr:              address,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
+
+	log.Printf("Starting WebSocket server on %s", address)
+	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("WebSocket server failed: %v", err)
+	}
+}
+
+func (s *WebSocketServer) Shutdown(ctx context.Context) error {
+	log.Println("Shutting down WebSocket server...")
+	return s.httpServer.Shutdown(ctx)
 }

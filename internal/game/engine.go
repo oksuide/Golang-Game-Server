@@ -2,239 +2,239 @@ package game
 
 import (
 	"log"
-	"math/rand"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// Размеры карты
+// Константы для настройки игры
 const (
-	MapWidth     = 2000
-	MapHeight    = 2000
-	TickRate     = 16 * time.Millisecond // ~60 тиков в секунду
-	MaxSpeed     = 200.0                 // Пикселей в секунду
-	Acceleration = 5.0                   // Скорость набора/снижения
+	GameTick          = 16 * time.Millisecond // ~60 FPS
+	MaxInputQueue     = 1000                  // Увеличим буфер канала ввода
+	BasePlayerSpeed   = 10.0
+	BasePlayerHealth  = 100.0
+	CollisionDistance = 10.0
+	BulletLifetime    = 5 * time.Second
 )
 
-// Вспомогательная функция для интерполяции
-func lerp(start, end, t float64) float64 {
-	return start + (end-start)*t
-}
-
-type InputMessage struct {
+// PlayerInput — структура для событий от игроков
+type PlayerInputData struct {
 	Up, Down, Left, Right bool
 	Angle                 float64
+	Shoot                 bool
 }
 
-// Игрок
-type Player struct {
+type PlayerInput struct {
 	ID          uint
-	X, Y        float64 // Позиция
-	Vx, Vy      float64 // Скорость по осям
-	Angle       float64 // Направление
-	Conn        *websocket.Conn
-	lastUpdated time.Time
+	Input       PlayerInputData
+	UpgradeStat string
 }
 
-// Игровой мир (ECS)
+// Game — игровое ядро с дополнительными полями для управления игрой
 type Game struct {
-	Players        map[uint]*Player
-	MovementSystem *MovementSystem
-	NetworkSystem  *NetworkSystem
-	mu             sync.RWMutex
+	Players map[uint]*Player
+	Mutex   sync.RWMutex
+	Inputs  chan PlayerInput
+	Bullets []*Bullet
+	Running bool          // Флаг работы игрового цикла
+	Done    chan struct{} // Канал для остановки игры
 }
 
-// Создаем новую игру
+// NewGame создает новую игру с инициализированными полями
 func NewGame() *Game {
 	return &Game{
-		Players:        make(map[uint]*Player),
-		MovementSystem: &MovementSystem{},
-		NetworkSystem:  &NetworkSystem{},
+		Players: make(map[uint]*Player),
+		Inputs:  make(chan PlayerInput, MaxInputQueue),
+		Done:    make(chan struct{}),
+		Running: false,
 	}
 }
 
-// Добавляем игрока
+// AddPlayer добавляет нового игрока с базовыми характеристиками
 func (g *Game) AddPlayer(id uint, conn *websocket.Conn) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.Mutex.Lock()
+	defer g.Mutex.Unlock()
 
-	time.Now().UnixNano()
-	x := rand.Float64() * MapWidth
-	y := rand.Float64() * MapHeight
+	// Проверяем, не существует ли уже игрок с таким ID
+	if _, exists := g.Players[id]; exists {
+		log.Printf("Игрок с ID %d уже существует", id)
+		return
+	}
 
 	g.Players[id] = &Player{
 		ID:          id,
-		X:           x,
-		Y:           y,
-		Vx:          0,
-		Vy:          0,
+		X:           0,
+		Y:           0,
 		Conn:        conn,
-		lastUpdated: time.Now(),
+		Level:       1,
+		XP:          0,
+		SkillPoints: 0,
+		Stats: map[string]float64{
+			"health":       BasePlayerHealth,
+			"damage":       10,
+			"speed":        BasePlayerSpeed,
+			"fire_rate":    1.0,
+			"body_damage":  10,
+			"bullet_speed": 10,
+			"reload_speed": 3,
+		},
+		lastShot: time.Now(),
+	}
+	log.Printf("Добавлен игрок %d", id)
+}
+
+// RemovePlayer удаляет игрока из игры
+func (g *Game) RemovePlayer(id uint) {
+	g.Mutex.Lock()
+	defer g.Mutex.Unlock()
+
+	if player, exists := g.Players[id]; exists {
+		if player.Conn != nil {
+			player.Conn.Close()
+		}
+		delete(g.Players, id)
+		log.Printf("Игрок %d удален", id)
 	}
 }
 
-// Основная игровая петля
-func (g *Game) GameLoop() {
-	ticker := time.NewTicker(TickRate)
+// Start запускает игровой цикл
+func (g *Game) Start() {
+	if g.Running {
+		return
+	}
+
+	g.Running = true
+	ticker := time.NewTicker(GameTick)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		g.Update()
+	for {
+		select {
+		case <-ticker.C:
+			g.updateGameState()
+		case input := <-g.Inputs:
+			g.processInput(input)
+		case <-g.Done:
+			g.Running = false
+			return
+		}
 	}
 }
 
-// Обновление игры (ECS)
-func (g *Game) Update() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	delta := TickRate.Seconds()
-
-	// Получаем данные от клиентов
-	g.NetworkSystem.Update(g.Players)
-
-	// Обновляем физику
-	g.MovementSystem.Update(g.Players, delta)
-}
-
-// Обновляет игрока, скрывая мьютекс внутри
-func (g *Game) UpdatePlayer(playerID uint, input InputMessage) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	player, exists := g.Players[playerID]
-	if exists {
-		g.NetworkSystem.UpdatePlayer(player, input)
+// Stop останавливает игровой цикл
+func (g *Game) Stop() {
+	if g.Running {
+		close(g.Done)
 	}
 }
 
-func (g *Game) Lock() {
-	g.mu.Lock()
+// updateGameState обновляет состояние игры
+func (g *Game) updateGameState() {
+	g.Mutex.Lock()
+	defer g.Mutex.Unlock()
+
+	// Обновляем игроков
+	for _, player := range g.Players {
+		player.LevelUp()
+	}
+
+	// Обновляем пули
+	g.updateBullets()
+
+	// Отправляем обновления игрокам
+	g.sendUpdates()
 }
 
-func (g *Game) Unlock() {
-	g.mu.Unlock()
-}
+// sendUpdates отправляет обновления состояния всем игрокам
+func (g *Game) sendUpdates() {
+	// Создаем копию состояния для отправки
+	playersCopy := make(map[uint]*Player, len(g.Players))
+	for id, player := range g.Players {
+		playersCopy[id] = player
+	}
 
-func (g *Game) RLock() {
-	g.mu.RLock()
-}
-
-func (g *Game) RUnlock() {
-	g.mu.RUnlock()
-}
-
-// ------------------ SYSTEMS ------------------
-
-// Система движения
-type MovementSystem struct{}
-
-func (s *MovementSystem) Update(players map[uint]*Player, delta float64) {
-	for _, p := range players {
-		if p.Conn == nil {
+	for _, player := range g.Players {
+		if player.Conn == nil {
 			continue
 		}
 
-		// Плавное изменение скорости
-		p.X += p.Vx * delta
-		p.Y += p.Vy * delta
-
-		// Ограничение по карте
-		if p.X < 0 {
-			p.X = 0
-		} else if p.X > MapWidth {
-			p.X = MapWidth
+		// Отправляем только необходимые данные, а не всех игроков
+		gameState := struct {
+			Players map[uint]*Player `json:"players"`
+			Bullets []*Bullet        `json:"bullets"`
+		}{
+			Players: playersCopy,
+			Bullets: g.Bullets,
 		}
-		if p.Y < 0 {
-			p.Y = 0
-		} else if p.Y > MapHeight {
-			p.Y = MapHeight
+
+		if err := player.Conn.WriteJSON(gameState); err != nil {
+			log.Printf("Ошибка отправки данных игроку %d: %v", player.ID, err)
+			player.Conn.Close()
+			player.Conn = nil
 		}
 	}
 }
 
-// Система получения входных данных от клиентов
-type NetworkSystem struct{}
+// processInput обрабатывает ввод игрока
+func (g *Game) processInput(input PlayerInput) {
+	g.Mutex.Lock()
+	defer g.Mutex.Unlock()
 
-func (s *NetworkSystem) Update(players map[uint]*Player) {
-	for _, p := range players {
-		if p.Conn == nil {
-			continue
-		}
-
-		// Получаем входные данные
-		var input struct {
-			Up, Down, Left, Right bool
-			Angle                 float64
-		}
-
-		err := p.Conn.ReadJSON(&input)
-		if err != nil {
-			log.Println("Ошибка чтения данных:", err)
-			continue
-		}
-
-		// Обновляем игрока через отдельную функцию
-		s.UpdatePlayer(p, input)
+	player, exists := g.Players[input.ID]
+	if !exists {
+		return
 	}
+
+	g.handleMovement(player, input.Input)
+	g.handleRotation(player, input.Input)
+	g.handleShooting(player, input.Input)
+	g.handleUpgrades(player, input.UpgradeStat)
 }
 
-// Обновление конкретного игрока
-func (s *NetworkSystem) UpdatePlayer(player *Player, input struct {
+// handleMovement обрабатывает движение игрока
+func (g *Game) handleMovement(player *Player, input struct {
 	Up, Down, Left, Right bool
 	Angle                 float64
+	Shoot                 bool
 }) {
-	// Обновляем направление
+	// Нормализуем движение по диагонали
+	var moveX, moveY float64
+	speed := player.Stats["speed"]
+
+	if input.Up && !input.Down {
+		moveY = -speed
+	} else if input.Down && !input.Up {
+		moveY = speed
+	}
+
+	if input.Left && !input.Right {
+		moveX = -speed
+	} else if input.Right && !input.Left {
+		moveX = speed
+	}
+
+	// Если движение по диагонали, нормализуем вектор
+	if moveX != 0 && moveY != 0 {
+		length := math.Sqrt(moveX*moveX + moveY*moveY)
+		moveX = moveX / length * speed
+		moveY = moveY / length * speed
+	}
+
+	player.X += moveX
+	player.Y += moveY
+
+	// Проверяем границы игрового поля (можно добавить константы для размеров поля)
+	const worldSize = 1000.0
+	player.X = math.Max(-worldSize, math.Min(worldSize, player.X))
+	player.Y = math.Max(-worldSize, math.Min(worldSize, player.Y))
+}
+
+// handleRotation обрабатывает поворот игрока
+func (g *Game) handleRotation(player *Player, input struct {
+	Up, Down, Left, Right bool
+	Angle                 float64
+	Shoot                 bool
+}) {
 	player.Angle = input.Angle
-
-	// Вычисляем целевые значения скорости
-	targetVx, targetVy := 0.0, 0.0
-	if input.Up {
-		targetVy = -MaxSpeed
-	}
-	if input.Down {
-		targetVy = MaxSpeed
-	}
-	if input.Left {
-		targetVx = -MaxSpeed
-	}
-	if input.Right {
-		targetVx = MaxSpeed
-	}
-
-	// Плавное изменение скорости
-	player.Vx = lerp(player.Vx, targetVx, Acceleration*TickRate.Seconds())
-	player.Vy = lerp(player.Vy, targetVy, Acceleration*TickRate.Seconds())
-}
-
-// Удаление игрока из игры
-func (g *Game) RemovePlayer(id uint) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.Players, id)
-}
-
-// Получение состояния игры
-func (g *Game) GetState() map[uint]PlayerState {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	state := make(map[uint]PlayerState)
-	for id, p := range g.Players {
-		state[id] = PlayerState{
-			X:     p.X,
-			Y:     p.Y,
-			Vx:    p.Vx,
-			Vy:    p.Vy,
-			Angle: p.Angle,
-		}
-	}
-	return state
-}
-
-// Структура для передачи состояния
-type PlayerState struct {
-	X, Y, Vx, Vy, Angle float64
 }
