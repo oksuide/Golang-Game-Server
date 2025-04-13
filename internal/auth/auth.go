@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"gameCore/config"
+	"gameCore/internal/config"
 	"gameCore/pkg/models"
 
 	"github.com/golang-jwt/jwt/v5"

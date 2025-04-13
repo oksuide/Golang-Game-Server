@@ -1,40 +1,62 @@
 package bootstrap
 
 import (
-	"log"
+	"log/slog"
+	"os"
 
-	"gameCore/config"
+	"gameCore/internal/config"
 	"gameCore/internal/game"
 	"gameCore/internal/network"
 	"gameCore/internal/storage"
+	"gameCore/internal/utils"
 )
 
-// Init запускает все сервисы и возвращает игровые объекты
 func Init() (*game.Game, *network.WebSocketServer) {
 	// Загружаем конфиг
-	cfg, err := config.LoadConfig("/home/oksuide/GoProjects/gameCore/config/config.yaml")
+	cfg, err := config.LoadConfig("config/config.yaml")
 	if err != nil {
-		log.Fatalf("Ошибка загрузки конфигурации: %v", err)
+		os.Exit(1)
 	}
 
+	// Настройка логгера
+	log, err := utils.SetupLogger(cfg.App.Env)
+	if err != nil {
+		log.Error("Logger setup failed", err)
+		os.Exit(1)
+	}
+
+	// Логирование начала инициализации
+	log.Info("Starting application initialization", slog.String("env", cfg.App.Env))
+
+	log.Debug("Debug messages are enabled")
 	// Подключаемся к БД
 	if err := storage.Connect(cfg.Database); err != nil {
-		log.Fatal("Ошибка БД:", err)
+		log.Error("Database connection failed", err)
+		os.Exit(1)
 	}
+
+	// Инициализируем таблицы
 	if err := storage.InitTables(); err != nil {
-		log.Fatal("Ошибка миграции БД:", err)
+		log.Error("Database migration failed", err)
+		os.Exit(1)
 	}
 
 	// Инициализируем Redis
 	if err := storage.InitRedis(cfg.Redis); err != nil {
-		log.Fatal("Ошибка Redis:", err)
+		log.Error("Redis initialization failed", err)
+		os.Exit(1)
 	}
 
+	// router := routes.SetupRouter()
+
 	// Создаем игровой движок
+	log.Info("Initializing game engine")
 	gameInstance := game.NewGame()
 
 	// Создаем WebSocket-сервер
+	log.Info("Initializing WebSocket server")
 	wsServer := network.NewWebSocketServer(gameInstance, cfg.WebSocket)
 
+	log.Info("Application initialization completed successfully")
 	return gameInstance, wsServer
 }

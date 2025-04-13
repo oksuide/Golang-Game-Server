@@ -4,10 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
-
-	"gameCore/config"
+	"gameCore/internal/config"
 	"gameCore/pkg/models"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

@@ -8,13 +8,20 @@ import (
 )
 
 type Config struct {
-	App       AppConfig       `yaml:"app"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Redis     RedisConfig     `yaml:"redis"`
-	JWT       JWTConfig       `yaml:"jwt"`
-	WebSocket WebSocketConfig `yaml:"websocket"`
-	Game      GameConfig      `yaml:"game"`
-	Logging   LoggingConfig   `yaml:"logging"`
+	App        AppConfig        `yaml:"app"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Redis      RedisConfig      `yaml:"redis"`
+	JWT        JWTConfig        `yaml:"jwt"`
+	WebSocket  WebSocketConfig  `yaml:"websocket"`
+	Game       GameConfig       `yaml:"game"`
+	Logging    LoggingConfig    `yaml:"logging"`
+	HttpServer HttpServerConfig `yaml:"http_server"`
+}
+
+type HttpServerConfig struct {
+	Address     string        `yaml:"address"`
+	Timeout     time.Duration `yaml:"timeout"`
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }
 
 type AppConfig struct {

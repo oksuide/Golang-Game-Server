@@ -3,10 +3,10 @@ package storage
 import (
 	"context"
 	"fmt"
-	"gameCore/config"
+	"gameCore/internal/config"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/go-redis/redis"
 )
 
 var RedisClient *redis.Client
@@ -22,10 +22,10 @@ func InitRedis(cfg config.RedisConfig) error {
 		PoolSize: cfg.PoolSize,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	if err := RedisClient.Ping(ctx).Err(); err != nil {
+	if err := RedisClient.Ping().Err(); err != nil {
 		return fmt.Errorf("redis connection failed: %w", err)
 	}
 
