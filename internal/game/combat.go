@@ -141,6 +141,10 @@ func (g *Game) handleUpgrade(playerID uint, stat string) {
 			player.Stats["speed"] += 0.5
 			log.Printf("Скорость увеличена до: %.1f", player.Stats["speed"])
 		}
+	case "reload":
+		newValue := player.Stats["fire_rate"] + 1.0
+		player.Stats["fire_rate"] = newValue
+		log.Printf("Скорострельность улучшена до: %.0f выстр/сек", player.Stats["fire_rate"])
 	default:
 		log.Printf("Неизвестный стат для улучшения: %s", stat)
 		return

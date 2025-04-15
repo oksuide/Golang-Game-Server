@@ -29,6 +29,7 @@ const (
 	CollisionDistance = 10.0
 	PlayerRadius      = 10.0 // Радиус игрока
 	BulletRadius      = 3.0  // Радиус пули
+	ObjectRadius      = 15.0
 	RespawnTime       = 5 * time.Second
 	MinX              = 0
 	MaxX              = 1880
@@ -38,19 +39,22 @@ const (
 )
 
 type Game struct {
-	Players map[uint]*Player
-	Mutex   sync.RWMutex
-	Inputs  chan PlayerInput
-	Bullets []*Bullet
-	Running bool          // Флаг работы игрового цикла
-	Done    chan struct{} // Канал для остановки игры
+	Players      map[uint]*Player
+	Objects      []*Object
+	Mutex        sync.RWMutex
+	Inputs       chan PlayerInput
+	Bullets      []*Bullet
+	RespawnDelay time.Duration
+	MaxObjects   int
+	Running      bool          // Флаг работы игрового цикла
+	Done         chan struct{} // Канал для остановки игры
 }
 
 type Player struct {
 	ID    uint
 	X, Y  float64
 	Angle float64         `json:"angle"`
-	Conn  *websocket.Conn `json:"-"` // Исключаем из JSON, так как соединение не сериализуется
+	Conn  *websocket.Conn `json:"-"`
 
 	Level            int
 	XP               int
@@ -60,7 +64,7 @@ type Player struct {
 	Alive            bool
 	FailedBroadcasts int
 	RespawnTimer     *time.Timer `json:"-"`
-	// lastShot time.Time // Время последнего выстрела для контроля скорострельности
+	lastShot         time.Time   // Время последнего выстрела для контроля скорострельности
 }
 
 type Bullet struct {
@@ -72,6 +76,32 @@ type Bullet struct {
 	Damage    float64
 	Active    bool
 	CreatedAt time.Time // Добавляем время создания для возможного времени жизни пули
+}
+
+type bulletState struct {
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Angle float64 `json:"angle"`
+}
+
+type playerState struct {
+	ID               uint               `json:"id"`
+	X                float64            `json:"x"`
+	Y                float64            `json:"y"`
+	Angle            float64            `json:"angle"`
+	Level            int                `json:"level"`
+	NewLvlExp        int                `json:"new_lvl_epx"`
+	SkillPoints      int                `json:"skill_points"`
+	FailedBroadcasts int                `json:"failed_broadcasts"`
+	Stats            map[string]float64 `json:"stats"`
+}
+
+type objectState struct {
+	ID uint `json:"id"`
+	// Type   string  `json:"type"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Health int     `json:"health"`
 }
 
 type PlayerInputData struct {
@@ -87,12 +117,17 @@ type PlayerInput struct {
 }
 
 func NewGame() *Game {
-	return &Game{
-		Players: make(map[uint]*Player),
-		Inputs:  make(chan PlayerInput, MaxInputQueue),
-		Done:    make(chan struct{}),
-		Running: false,
+	game := &Game{
+		Players:      make(map[uint]*Player),
+		Inputs:       make(chan PlayerInput, MaxInputQueue),
+		Done:         make(chan struct{}),
+		Running:      false,
+		Objects:      make([]*Object, 0),
+		MaxObjects:   30,              // default object count
+		RespawnDelay: 1 * time.Minute, // default respawn time
 	}
+	game.InitObjectSystem(game.MaxObjects, game.RespawnDelay)
+	return game
 }
 
 // AddPlayer добавляет нового игрока с базовыми характеристиками
@@ -121,15 +156,21 @@ func (g *Game) AddPlayer(id uint, conn *websocket.Conn) error {
 			"max_health": BasePlayerHealth,
 			"damage":     10,
 			"speed":      40,
-			// "fire_rate":    1.0,
+			"fire_rate":  1,
 			// "body_damage":  10,
 			"bullet_speed": 10,
-			// "reload_speed": 3,
+			"reload_speed": 3,
 		},
-		// lastShot: time.Now(),
+		lastShot: time.Now(),
 	}
 	log.Printf("Добавлен игрок %d", id)
 	return nil
+}
+
+func (g *Game) InitObjectSystem(maxObjects int, respawnDelay time.Duration) {
+	g.MaxObjects = maxObjects
+	g.RespawnDelay = respawnDelay
+	g.CheckObjects()
 }
 
 func (g *Game) Start() {
@@ -160,6 +201,7 @@ func (g *Game) Start() {
 // Stop останавливает игровой цикл
 func (g *Game) Stop() {
 	if g.Running {
+		g.CleanupObjects()
 		close(g.Done)
 	}
 }
@@ -225,6 +267,19 @@ func (g *Game) shootBullet(player *Player) {
 		return
 	}
 
+	now := time.Now()
+	fireRate := player.Stats["fire_rate"]
+
+	// Безопасный расчет интервала
+	if fireRate > 0 {
+		minInterval := time.Duration(float64(time.Second) / fireRate)
+		if now.Sub(player.lastShot) < minInterval {
+			return
+		}
+	} else {
+		return // Если скорострельность нулевая - не стреляем
+	}
+
 	bullet := &Bullet{
 		ID:        uint(len(g.Bullets) + 1),
 		OwnerID:   player.ID,
@@ -234,9 +289,12 @@ func (g *Game) shootBullet(player *Player) {
 		Speed:     player.Stats["bullet_speed"],
 		Damage:    player.Stats["damage"],
 		Active:    true,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
 	}
+
+	player.lastShot = now // Обновляем время последнего выстрела
 	g.Bullets = append(g.Bullets, bullet)
+
 	log.Printf("Игрок %d выстрелил. Урон: %.1f, Скорость: %.1f",
 		player.ID, bullet.Damage, bullet.Speed)
 }
@@ -255,7 +313,7 @@ func (g *Game) updateBullets() {
 		bullet.Y += bullet.Speed * math.Sin(bullet.Angle)
 
 		// Проверяем коллизии
-		if !g.checkBulletCollisions(bullet) {
+		if !g.checkBulletCollisions(bullet) || !g.checkBulletObjectCollisions(bullet) {
 			continue
 		}
 
@@ -289,24 +347,22 @@ func (g *Game) update() {
 }
 
 func (g *Game) serializeState() interface{} {
-	type playerState struct {
-		ID               uint               `json:"id"`
-		X                float64            `json:"x"`
-		Y                float64            `json:"y"`
-		Angle            float64            `json:"angle"`
-		Level            int                `json:"level"`
-		NewLvlExp        int                `json:"new_lvl_epx"`
-		SkillPoints      int                `json:"skill_points"`
-		FailedBroadcasts int                `json:"failed_broadcasts"`
-		Stats            map[string]float64 `json:"stats"`
-	}
+	g.Mutex.RLock()
+	defer g.Mutex.RUnlock()
 
-	type bulletState struct {
-		X     float64 `json:"x"`
-		Y     float64 `json:"y"`
-		Angle float64 `json:"angle"`
+	// Объединяем все игровые сущности в единый ответ
+	return map[string]interface{}{
+		"players": g.serializePlayers(),
+		"bullets": g.serializeBullets(),
+		"objects": g.serializeObjects(), // Добавляем игровые объекты
+		// "meta": map[string]interface{}{
+		// 	"server_time": time.Now().UnixMilli(),
+		// 	// "version":     g.Config.Version,
+		// },
 	}
+}
 
+func (g *Game) serializePlayers() map[uint]playerState {
 	players := make(map[uint]playerState)
 	for id, p := range g.Players {
 		players[id] = playerState{
@@ -319,7 +375,10 @@ func (g *Game) serializeState() interface{} {
 			SkillPoints: p.SkillPoints,
 		}
 	}
+	return players
+}
 
+func (g *Game) serializeBullets() []bulletState {
 	bullets := make([]bulletState, 0, len(g.Bullets))
 	for _, b := range g.Bullets {
 		bullets = append(bullets, bulletState{
@@ -328,12 +387,53 @@ func (g *Game) serializeState() interface{} {
 			Angle: b.Angle,
 		})
 	}
-
-	return map[string]interface{}{
-		"players": players,
-		"bullets": bullets,
-	}
+	return bullets
 }
+
+func (g *Game) serializeObjects() []objectState {
+	objects := make([]objectState, 0, len(g.Objects))
+	for _, obj := range g.Objects {
+		if obj.Active {
+			objects = append(objects, objectState{
+				ID:     obj.ID,
+				X:      obj.X,
+				Y:      obj.Y,
+				Health: obj.Health,
+			})
+		}
+	}
+	return objects
+}
+
+// func (g *Game) serializeState() interface{} {
+
+// 	players := make(map[uint]playerState)
+// 	for id, p := range g.Players {
+// 		players[id] = playerState{
+// 			ID:          p.ID,
+// 			X:           p.X,
+// 			Y:           p.Y,
+// 			Angle:       p.Angle,
+// 			Level:       p.Level,
+// 			Stats:       p.Stats,
+// 			SkillPoints: p.SkillPoints,
+// 		}
+// 	}
+
+// 	bullets := make([]bulletState, 0, len(g.Bullets))
+// 	for _, b := range g.Bullets {
+// 		bullets = append(bullets, bulletState{
+// 			X:     b.X,
+// 			Y:     b.Y,
+// 			Angle: b.Angle,
+// 		})
+// 	}
+
+// 	return map[string]interface{}{
+// 		"players": players,
+// 		"bullets": bullets,
+// 	}
+// }
 
 func (g *Game) broadcastState() {
 	g.Mutex.RLock()
