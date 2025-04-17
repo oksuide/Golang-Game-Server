@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Shooter Game</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/upgrades.css">
+</head>
+
+<body>
+    <div id="status">Connected to server</div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="upgrade-menu">
+        <h2>Выберите улучшение</h2>
+        <div class="upgrade-grid">
+            <button class="upgrade-btn" data-stat="damage">Урон +2</button>
+            <button class="upgrade-btn" data-stat="health">Здоровье +15</button>
+            <button class="upgrade-btn" data-stat="speed">Скорость +0.5</button>
+            <button class="upgrade-btn" data-stat="reload">Перезарядка -0.1s</button>
+        </div>
+        <div id="skill-points">Очков: 0</div>
+    </div>
+
+    <script src="/js/main.js" type="module"></script>
+</body>
+
+</html>

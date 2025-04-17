@@ -1,0 +1,41 @@
+#upgrade-menu {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.8);
+    padding: 20px;
+    border-radius: 10px;
+    color: white;
+    font-family: Arial;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.upgrade-btn {
+    padding: 10px;
+    background: #4f5e50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+    pointer-events: auto;
+}
+
+.upgrade-btn:hover {
+    background: #45a049;
+}
+
+.upgrade-btn:disabled {
+    background: #cccccc;
+    cursor: not-allowed;
+}
+
+.upgrade-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+}
