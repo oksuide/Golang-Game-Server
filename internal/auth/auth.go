@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -22,9 +23,17 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func RegisterUser(ctx context.Context, repo repository.UserRepository, username, password string) error {
+func RegisterUser(ctx context.Context, repo repository.UserRepository, username, password, email string) error {
 	if err := validatePassword(password); err != nil {
 		return err
+	}
+
+	emailExists, err := repo.EmailExists(ctx, email)
+	if err != nil {
+		return fmt.Errorf("check email exists: %w", err)
+	}
+	if emailExists {
+		return storage.ErrEmailAlreadyExists
 	}
 
 	exists, err := repo.UserExists(ctx, username)
@@ -32,7 +41,7 @@ func RegisterUser(ctx context.Context, repo repository.UserRepository, username,
 		return fmt.Errorf("check user exists: %w", err)
 	}
 	if exists {
-		return errors.New("user already exists")
+		return storage.ErrUserAlreadyExists
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -43,6 +52,7 @@ func RegisterUser(ctx context.Context, repo repository.UserRepository, username,
 	user := models.User{
 		Username: username,
 		Password: string(hashedPassword),
+		Email:    email,
 	}
 
 	if err := repo.CreateUser(ctx, &user); err != nil {
@@ -59,7 +69,7 @@ func LoginUser(ctx context.Context, repo repository.UserRepository, cfg *config.
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return "", errors.New("invalid password")
+		return "", storage.ErrInvalidPassword
 	}
 
 	claims := &Claims{
@@ -80,7 +90,7 @@ func LoginUser(ctx context.Context, repo repository.UserRepository, cfg *config.
 
 func validatePassword(password string) error {
 	if len(password) < 8 {
-		return errors.New("password must be at least 8 characters")
+		return storage.ErrInvalidPassword
 	}
 	return nil
 }
@@ -99,6 +109,7 @@ func NewAuthHandler(repo repository.UserRepository, cfg *config.Config) *AuthHan
 
 type registerRequest struct {
 	Username string `json:"username" binding:"required"`
+	Email    string `json:"email" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -109,12 +120,23 @@ func (h *AuthHandler) RegisterHandler(c *gin.Context) {
 		return
 	}
 
-	err := RegisterUser(c.Request.Context(), h.repo, req.Username, req.Password)
+	err := RegisterUser(c.Request.Context(), h.repo, req.Username, req.Password, req.Email)
 	switch {
 	case errors.Is(err, storage.ErrUserAlreadyExists):
 		c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+	case errors.Is(err, storage.ErrInvalidPassword):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Password requirements: minimum 8 characters",
+		})
+	case errors.Is(err, storage.ErrEmailAlreadyExists):
+		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+
 	case err != nil:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "registration failed"})
+		log.Printf("Registration error: %v", err) // Логируем детали ошибки
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "registration failed",
+			"details": "check server logs", // Для разработки
+		})
 	default:
 		c.JSON(http.StatusCreated, gin.H{"message": "user created successfully"})
 	}

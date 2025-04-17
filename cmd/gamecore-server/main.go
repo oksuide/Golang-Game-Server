@@ -8,18 +8,14 @@ import (
 	"syscall"
 
 	"gameCore/internal/bootstrap"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	// Инициализируем сервисы
 	gameInstance, wsServer, router := bootstrap.Init()
 
-	// WebSocket endpoint
-	router.GET("/ws", func(c *gin.Context) {
-		wsServer.HandleWS(c.Writer, c.Request)
-	})
+	// Регистрация WebSocket обработчика
+	wsServer.RegisterRoutes(router)
 
 	// Обслуживание статических файлов
 	router.Static("/public", "./public")

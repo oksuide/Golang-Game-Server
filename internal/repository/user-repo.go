@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"gameCore/pkg/models"
 
 	"gorm.io/gorm"
@@ -40,8 +41,22 @@ func (r *UserRepo) GetUser(ctx context.Context, username string) (*models.User, 
 	return &user, nil
 }
 
+func (r *UserRepo) EmailExists(ctx context.Context, email string) (bool, error) {
+	var count int64
+	err := r.DB.Model(&models.User{}).
+		Where("email = ?", email).
+		Count(&count).
+		Error
+
+	if err != nil {
+		return false, fmt.Errorf("email exists check failed: %w", err)
+	}
+	return count > 0, nil
+}
+
 type UserRepository interface {
 	UserExists(ctx context.Context, username string) (bool, error)
 	CreateUser(ctx context.Context, user *models.User) error
 	GetUser(ctx context.Context, username string) (*models.User, error)
+	EmailExists(ctx context.Context, email string) (bool, error)
 }

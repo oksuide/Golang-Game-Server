@@ -7,14 +7,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
 type WebSocketServer struct {
-	Game       *game.Game
-	httpServer *http.Server
-	Config     config.WebSocketConfig
-	upgrader   websocket.Upgrader
+	Game     *game.Game
+	Config   config.WebSocketConfig
+	upgrader websocket.Upgrader
 }
 
 func NewWebSocketServer(gameInstance *game.Game, wsConfig config.WebSocketConfig) *WebSocketServer {
@@ -40,44 +40,48 @@ func NewWebSocketServer(gameInstance *game.Game, wsConfig config.WebSocketConfig
 	}
 }
 
-func (s *WebSocketServer) StartServer() {
-	http.HandleFunc("/ws", s.HandleWS)
-
-	s.httpServer = &http.Server{
-		Addr:    "localhost:8080",
-		Handler: nil,
-	}
-
-	go func() {
-		log.Printf("🌐 WebSocket сервер слушает на localhost:8080")
-		if err := s.httpServer.ListenAndServe(); err != nil {
-			log.Fatalf("WebSocket сервер упал: %v", err)
+func (s *WebSocketServer) RegisterRoutes(router *gin.Engine) {
+	router.GET("/ws", func(c *gin.Context) {
+		// Извлекаем userID из контекста, установленного middleware
+		userID, exists := c.Get("userID")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
 		}
-	}()
+
+		// Вызов обработчика WebSocket
+		s.HandleWS(c.Writer, c.Request, userID.(uint))
+	})
 }
 
-func (s *WebSocketServer) HandleWS(w http.ResponseWriter, r *http.Request) {
+func (s *WebSocketServer) HandleWS(w http.ResponseWriter, r *http.Request, userID uint) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "WebSocket upgrade error", http.StatusInternalServerError)
 		return
 	}
 
-	// Простой ID (в реальности должен быть от авторизации)
-	playerID := uint(time.Now().UnixNano() % 1000000)
+	// Закрытие соединения при выходе
+	defer conn.Close()
+
+	// Используем userID из аутентификации
+	playerID := userID
 
 	err = s.Game.AddPlayer(playerID, conn)
 	if err != nil {
 		log.Println("Ошибка добавления игрока:", err)
-		conn.Close()
 		return
 	}
 
+	// Отправка ID игрока
 	conn.WriteJSON(map[string]interface{}{
 		"yourId": playerID,
 	})
 
+	// Обработка входящих сообщений
 	go func() {
+		defer s.Game.RemovePlayer(playerID)
+
 		for {
 			var input game.PlayerInputData
 			if err := conn.ReadJSON(&input); err != nil {

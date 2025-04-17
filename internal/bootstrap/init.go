@@ -24,7 +24,7 @@ func Init() (*game.Game, *network.WebSocketServer, *gin.Engine) {
 
 	log, err := utils.SetupLogger(cfg.App.Env)
 	if err != nil {
-		log.Error("Logger setup failed", err)
+		log.Error("Logger setup failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -32,12 +32,12 @@ func Init() (*game.Game, *network.WebSocketServer, *gin.Engine) {
 
 	// Database initialization
 	if err := storage.Connect(cfg.Database); err != nil {
-		log.Error("Database connection failed", err)
+		log.Error("Database connection failed", "error", err)
 		os.Exit(1)
 	}
 
 	if err := storage.InitTables(); err != nil {
-		log.Error("Database migration failed", err)
+		log.Error("Database migration failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -48,7 +48,7 @@ func Init() (*game.Game, *network.WebSocketServer, *gin.Engine) {
 
 	// Redis initialization
 	if err := storage.InitRedis(cfg.Redis); err != nil {
-		log.Error("Redis initialization failed", err)
+		log.Error("Redis initialization failed", "error", err)
 		os.Exit(1)
 	}
 

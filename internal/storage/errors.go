@@ -9,6 +9,7 @@ var (
 	ErrInvalidPassword    = errors.New("invalid password")
 	ErrHashingPassword    = errors.New("password hashing failed")
 	ErrTokenGeneration    = errors.New("token generation failed")
+	ErrEmailAlreadyExists = errors.New("email already exists")
 )
 
 // Роуты с авторизацией
