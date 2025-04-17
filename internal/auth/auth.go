@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"gameCore/internal/config"
+	"gameCore/internal/repository"
+	"gameCore/internal/storage"
 	"gameCore/pkg/models"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -18,13 +22,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-type UserRepository interface {
-	UserExists(ctx context.Context, username string) (bool, error)
-	CreateUser(ctx context.Context, user *models.User) error
-	GetUser(ctx context.Context, username string) (*models.User, error)
-}
-
-func RegisterUser(ctx context.Context, repo UserRepository, username, password string) error {
+func RegisterUser(ctx context.Context, repo repository.UserRepository, username, password string) error {
 	if err := validatePassword(password); err != nil {
 		return err
 	}
@@ -54,7 +52,7 @@ func RegisterUser(ctx context.Context, repo UserRepository, username, password s
 	return nil
 }
 
-func LoginUser(ctx context.Context, repo UserRepository, cfg *config.Config, username, password string) (string, error) {
+func LoginUser(ctx context.Context, repo repository.UserRepository, cfg *config.Config, username, password string) (string, error) {
 	user, err := repo.GetUser(ctx, username)
 	if err != nil {
 		return "", fmt.Errorf("get user: %w", err)
@@ -85,4 +83,65 @@ func validatePassword(password string) error {
 		return errors.New("password must be at least 8 characters")
 	}
 	return nil
+}
+
+type AuthHandler struct {
+	repo repository.UserRepository
+	cfg  *config.Config
+}
+
+func NewAuthHandler(repo repository.UserRepository, cfg *config.Config) *AuthHandler {
+	return &AuthHandler{
+		repo: repo,
+		cfg:  cfg,
+	}
+}
+
+type registerRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+func (h *AuthHandler) RegisterHandler(c *gin.Context) {
+	var req registerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	err := RegisterUser(c.Request.Context(), h.repo, req.Username, req.Password)
+	switch {
+	case errors.Is(err, storage.ErrUserAlreadyExists):
+		c.JSON(http.StatusConflict, gin.H{"error": "user already exists"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "registration failed"})
+	default:
+		c.JSON(http.StatusCreated, gin.H{"message": "user created successfully"})
+	}
+}
+
+type loginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+func (h *AuthHandler) LoginHandler(c *gin.Context) {
+	var req loginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	token, err := LoginUser(c.Request.Context(), h.repo, h.cfg, req.Username, req.Password)
+	switch {
+	case errors.Is(err, storage.ErrInvalidCredentials):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "login failed"})
+	default:
+		c.JSON(http.StatusOK, gin.H{
+			"token":      token,
+			"expires_in": h.cfg.JWT.Expiration / time.Second,
+		})
+	}
 }

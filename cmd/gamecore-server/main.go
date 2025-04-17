@@ -8,25 +8,36 @@ import (
 	"syscall"
 
 	"gameCore/internal/bootstrap"
+
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	// Инициализируем сервисы
-	gameInstance, wsServer := bootstrap.Init()
+	gameInstance, wsServer, router := bootstrap.Init()
 
-	// Статические файлы (например, index.html)
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./web"))))
+	// WebSocket endpoint
+	router.GET("/ws", func(c *gin.Context) {
+		wsServer.HandleWS(c.Writer, c.Request)
+	})
+
+	// Обслуживание статических файлов
+	router.Static("/public", "./public")
 
 	// Запускаем игровые процессы
 	go gameInstance.Start()
-	go wsServer.StartServer()
 
-	// Запускаем HTTP сервер для обслуживания статических файлов
+	// Настраиваем и запускаем HTTP сервер
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: router, // Используем Gin router как основной обработчик
+	}
+
 	go func() {
-		log.Println("HTTP сервер работает на порту 8081 для статики")
-		err := http.ListenAndServe(":8081", nil) // Это другой порт для статики
-		if err != nil {
-			log.Fatalf("Ошибка HTTP сервера: %v", err)
+		log.Println("Сервер запущен на http://localhost:8080")
+		log.Println("WebSocket endpoint: ws://localhost:8080/ws")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Ошибка сервера: %v", err)
 		}
 	}()
 
@@ -37,6 +48,8 @@ func main() {
 
 	// Грейсфул шатдаун
 	log.Println("Завершаем работу...")
-	// wsServer.Shutdown(nil)
+	// При необходимости добавьте shutdown логику
+	// wsServer.Shutdown(context.Background())
+	// server.Shutdown(context.Background())
 	log.Println("Сервер остановлен.")
 }

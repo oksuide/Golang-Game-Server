@@ -41,7 +41,7 @@ func NewWebSocketServer(gameInstance *game.Game, wsConfig config.WebSocketConfig
 }
 
 func (s *WebSocketServer) StartServer() {
-	http.HandleFunc("/ws", s.handleWS)
+	http.HandleFunc("/ws", s.HandleWS)
 
 	s.httpServer = &http.Server{
 		Addr:    "localhost:8080",
@@ -56,7 +56,7 @@ func (s *WebSocketServer) StartServer() {
 	}()
 }
 
-func (s *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
+func (s *WebSocketServer) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		http.Error(w, "WebSocket upgrade error", http.StatusInternalServerError)
