@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -40,58 +39,49 @@ func NewWebSocketServer(gameInstance *game.Game, wsConfig config.WebSocketConfig
 	}
 }
 
-func (s *WebSocketServer) RegisterRoutes(router *gin.Engine) {
-	router.GET("/ws", func(c *gin.Context) {
-		// Извлекаем userID из контекста, установленного middleware
-		userID, exists := c.Get("userID")
-		if !exists {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-			return
-		}
-
-		// Вызов обработчика WebSocket
-		s.HandleWS(c.Writer, c.Request, userID.(uint))
-	})
-}
-
 func (s *WebSocketServer) HandleWS(w http.ResponseWriter, r *http.Request, userID uint) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		http.Error(w, "WebSocket upgrade error", http.StatusInternalServerError)
+		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-
-	// Закрытие соединения при выходе
 	defer conn.Close()
 
-	// Используем userID из аутентификации
-	playerID := userID
-
-	err = s.Game.AddPlayer(playerID, conn)
+	// Добавляем игрока с аутентифицированным ID
+	err = s.Game.AddPlayer(userID, conn) // Используем userID из middleware
 	if err != nil {
-		log.Println("Ошибка добавления игрока:", err)
+		log.Printf("Add player error: %v", err)
+		conn.WriteJSON(map[string]interface{}{
+			"error": "Failed to join game",
+		})
 		return
 	}
 
-	// Отправка ID игрока
+	// Уведомление об успешном подключении
 	conn.WriteJSON(map[string]interface{}{
-		"yourId": playerID,
+		"yourId": userID,
+		"status": "connected",
 	})
 
-	// Обработка входящих сообщений
-	go func() {
-		defer s.Game.RemovePlayer(playerID)
+	// Обработчик входящих сообщений
+	go s.handleMessages(conn, userID)
+}
 
-		for {
-			var input game.PlayerInputData
-			if err := conn.ReadJSON(&input); err != nil {
-				log.Printf("Ошибка чтения от игрока %d: %v", playerID, err)
-				return
+func (s *WebSocketServer) handleMessages(conn *websocket.Conn, userID uint) {
+	defer s.Game.RemovePlayer(userID)
+
+	for {
+		var input game.PlayerInputData
+		if err := conn.ReadJSON(&input); err != nil {
+			if websocket.IsUnexpectedCloseError(err) {
+				log.Printf("Player %d disconnected: %v", userID, err)
 			}
-			s.Game.Inputs <- game.PlayerInput{
-				ID:    playerID,
-				Input: input,
-			}
+			return
 		}
-	}()
+
+		s.Game.Inputs <- game.PlayerInput{
+			ID:    userID,
+			Input: input,
+		}
+	}
 }

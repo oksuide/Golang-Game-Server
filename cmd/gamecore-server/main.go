@@ -12,13 +12,10 @@ import (
 
 func main() {
 	// Инициализируем сервисы
-	gameInstance, wsServer, router := bootstrap.Init()
-
-	// Регистрация WebSocket обработчика
-	wsServer.RegisterRoutes(router)
+	gameInstance, _, router := bootstrap.Init()
 
 	// Обслуживание статических файлов
-	router.Static("/public", "./public")
+	// router.Static("/public", "./public")
 
 	// Запускаем игровые процессы
 	go gameInstance.Start()

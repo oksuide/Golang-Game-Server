@@ -19,6 +19,7 @@ import (
 )
 
 type Claims struct {
+	UserID   uint   `json:"user_id"`
 	Username string `json:"username"`
 	jwt.RegisteredClaims
 }
@@ -69,15 +70,18 @@ func LoginUser(ctx context.Context, repo repository.UserRepository, cfg *config.
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return "", storage.ErrInvalidPassword
+		return "", storage.ErrInvalidCredentials
 	}
 
 	claims := &Claims{
+		UserID:   user.ID, // добавляем ID
 		Username: user.Username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.JWT.Expiration)),
 		},
 	}
+
+	log.Printf("Token claims: %+v", claims)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cfg.JWT.SecretKey))
@@ -138,7 +142,18 @@ func (h *AuthHandler) RegisterHandler(c *gin.Context) {
 			"details": "check server logs", // Для разработки
 		})
 	default:
-		c.JSON(http.StatusCreated, gin.H{"message": "user created successfully"})
+		// После успешной регистрации сразу логиним
+		token, err := LoginUser(c.Request.Context(), h.repo, h.cfg, req.Username, req.Password)
+		if err != nil {
+			log.Printf("Auto-login after registration failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "auto-login failed"})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"token":      token,
+			"expires_in": h.cfg.JWT.Expiration / time.Second,
+		})
 	}
 }
 

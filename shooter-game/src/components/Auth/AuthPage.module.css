@@ -1,0 +1,21 @@
+.authPage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background-color: #f5f5f5;
+}
+
+.toggleButton {
+    margin-top: 20px;
+    background: none;
+    border: none;
+    color: #0066cc;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.toggleButton:hover {
+    text-decoration: underline;
+}

@@ -13,60 +13,38 @@ type JWTConfig interface {
 	GetJWTSecret() string
 }
 
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Получение конфигурации
-		cfg, ok := c.MustGet("config").(JWTConfig)
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "Configuration unavailable",
-			})
-			return
-		}
-
-		// Извлечение токена
 		tokenString := extractToken(c)
 		if tokenString == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization required",
+				"error": "Authorization token required",
 			})
 			return
 		}
 
-		// Парсинг токена
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return []byte(cfg.GetJWTSecret()), nil
+			return []byte(jwtSecret), nil
 		})
 
-		// Обработка ошибок парсинга
-		if err != nil {
+		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "Invalid token",
 			})
 			return
 		}
 
-		// Проверка валидности токена
-		if !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token",
-			})
-			return
-		}
-
-		// Извлечение claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid token format",
+				"error": "Invalid token claims",
 			})
 			return
 		}
 
-		// Извлечение userID
 		userID, err := extractUserID(claims)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -81,11 +59,18 @@ func AuthMiddleware() gin.HandlerFunc {
 }
 
 func extractToken(c *gin.Context) string {
+	if strings.HasSuffix(c.Request.URL.Path, "/ws") {
+		if token := c.Query("token"); token != "" {
+			return token
+		}
+	}
+
 	bearerToken := c.GetHeader("Authorization")
 	if len(bearerToken) > 7 && strings.EqualFold(bearerToken[:7], "BEARER ") {
 		return bearerToken[7:]
 	}
-	return c.Query("token")
+
+	return ""
 }
 
 func extractUserID(claims jwt.MapClaims) (uint, error) {
